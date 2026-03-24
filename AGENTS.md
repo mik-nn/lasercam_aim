@@ -99,19 +99,7 @@ Anchors are mandatory when:
 
 After running tests for a complex task, the Agent must overwrite docs/test-summary.md with:
 
-# Test Summary  
-Passed: <NUM_PASSED>; failed: <NUM_FAILED>  
-## Passed  
-- <module.TestClass.test_name>  
-## Failed  
-### <module.TestClass.test_name>  
-Error: <first line of assertion error>  
 
-Full stack traces go after each failed test.
-
-## 6. Code Quality and Self‑Verification
-
-### 6.1 Code Quality Pipeline
 
 For complex tasks or when requested:
 

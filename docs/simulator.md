@@ -15,48 +15,42 @@ It enables testing of the entire workflow before hardware integration.
 ## 2. Components of the Simulator
 
 The simulator consists of:
-- a virtual work area image,
-- a camera viewport that moves over the work area,
-- a laser position derived from camera position and offset,
-- a movement model for the gantry.
-
-The simulator updates positions and renders overlays for debugging.
+- `MotionSimulator`: A class that models the physical environment, including the work area, gantry, and camera/laser positions.
+- `CameraSimulator`: A class that simulates a camera, using the `MotionSimulator` to generate frames. It also includes the `MarkerRecognizer`.
+- `BaseController`: An abstract base class for controllers.
+- `SimulatedController`: A controller that sends movement commands to the `MotionSimulator`.
 
 ## 3. Camera Model
 
-The camera model includes:
-- resolution,
-- field of view,
-- pixel-to-millimeter scaling,
-- optional lens distortion (ignored in MVP).
+The camera model is designed to accurately reflect a real-world camera by decoupling the workspace image resolution from the camera's sensor resolution.
 
-The camera viewport extracts a subregion of the work area image.
+- **`workspace_pixels_per_mm`**: The resolution of the background image of the work area.
+- **`camera_fov_mm`**: The physical area (e.g., 50x37.5 mm) that the camera can see.
+- **`camera_resolution_px`**: The native sensor resolution of the camera (e.g., 1920x1080 pixels).
 
-## 4. Gantry Model
+When `get_camera_view()` is called, the simulator:
+1.  Calculates the region to crop from the workspace image, based on the camera's FOV in mm and the workspace image's resolution.
+2.  Crops this region.
+3.  **Resizes the cropped image to the camera's native `camera_resolution_px`**.
 
-The gantry model tracks:
-- current X/Y position,
-- movement commands,
-- velocity and acceleration (simplified),
-- boundaries of the work area.
+This ensures that the `MarkerRecognizer` always receives a full-resolution image, just as it would from a real camera, regardless of the resolution of the workspace image.
 
-The MVP uses instantaneous movement for simplicity.
+## 4. Gantry and Controller Model
+
+Movement is handled by a controller abstraction (`BaseController`).
+- The `SimulatedController` directly manipulates the `MotionSimulator`'s gantry position.
+- Real hardware controllers (like `GRBLController` or `RuidaController`) will send commands to the physical machine.
+
+The `CameraSimulator` can be initialized with any controller that inherits from `BaseController`. If no controller is provided, it creates a `SimulatedController` by default.
+
+When `get_frame()` is called on the `CameraSimulator`, it first queries the controller for the current position, updates the `MotionSimulator`'s gantry position accordingly, and then renders the camera view. This ensures the simulated view always matches the controller's state, whether it's simulated or real.
 
 ## 5. Laser Offset
 
-The laser is offset from the camera by a fixed vector.  
+The laser is offset from the camera by a fixed vector.
 The simulator applies this offset to compute the laser position when the camera is centered on a marker.
 
-## 6. Movement Operations
-
-The simulator supports:
-- move camera to marker,
-- move laser to marker center,
-- manual jogging via UI controls.
-
-These operations mimic the behaviour of the final tool.
-
-## 7. Visualization
+## 6. Visualization
 
 The simulator renders:
 - the work area,
@@ -67,7 +61,6 @@ The simulator renders:
 
 This visualization is essential for debugging alignment logic.
 
-## 8. Transition to Real Hardware
+## 7. Transition to Real Hardware
 
-The simulator is removed or disabled in the final tool.  
-The hardware driver replaces the movement model, but the external behaviour remains identical.
+To switch to real hardware, the `Application` class is configured to instantiate a real controller (e.g., `GRBLController`) instead of relying on the default `SimulatedController`. The rest of the application, including the UI and the `CameraSimulator`, continues to work through the `BaseController` abstraction. The `CameraSimulator` is still used to provide a visual representation of the workspace, with its position driven by the real controller.

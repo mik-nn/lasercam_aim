@@ -1,6 +1,6 @@
 # Modules
 
-This document describes all major modules of the Marker Alignment Tool.  
+This document describes all major modules of the Marker Alignment Tool.
 It covers both the **MVP implementation (Python)** and the **final implementation (C/C++/Qt)**, while keeping the external behaviour identical across both stages.
 
 ---
@@ -63,7 +63,6 @@ Simulate gantry movement, camera position, and laser offset during MVP developme
 ### Responsibilities
 - Represent virtual X/Y coordinates of the gantry.
 - Represent camera offset relative to the laser.
-- Simulate movement commands (“move camera to marker”, “move laser to marker center”).
 - Render camera FOV over a virtual work area.
 - Visualize where the laser would cut relative to printed artwork.
 
@@ -77,11 +76,39 @@ Simulate gantry movement, camera position, and laser offset during MVP developme
 - Visualization overlays.
 
 ### Notes
-- Exists only in MVP; final tool uses real hardware movement.
+- This module provides the "physics" of the simulated world. Movement commands are issued by a `Controller`.
 
 ---
 
-## 4. LightBurn Bridge
+## 4. Controller Module
+
+### Purpose
+Abstract the control of the machine's gantry, whether real or simulated.
+
+### Responsibilities
+- Provide a common interface (`BaseController`) for moving the gantry.
+- `move_to(x, y)`: Move to an absolute position.
+- `move_by(dx, dy)`: Move by a relative amount.
+- `position`: Get the current gantry position.
+- Implement concrete controller classes:
+    - `SimulatedController`: Wraps the `MotionSimulator` to move the virtual gantry.
+    - `GRBLController`: Sends G-code commands over a serial port.
+    - `RuidaController`: Sends commands over UDP to a Ruida controller.
+
+### Inputs
+- For real controllers: port, baud rate, host, etc.
+- For simulated controller: an instance of `MotionSimulator`.
+
+### Outputs
+- Movement commands to the hardware or simulator.
+- Position feedback from the hardware or simulator.
+
+### Notes
+- The UI and other high-level components only interact with the `BaseController` interface, making the application hardware-agnostic.
+
+---
+
+## 5. LightBurn Bridge
 
 ### Purpose
 Integrate with LightBurn’s Print & Cut workflow by detecting user actions and maintaining alignment state.
@@ -91,149 +118,45 @@ Integrate with LightBurn’s Print & Cut workflow by detecting user actions and 
 - Track when LightBurn is the active window.
 - Intercept Alt+F1 (and other Print & Cut hotkeys).
 - Maintain Print & Cut state machine:
-  - `idle`
-  - `first_marker`
-  - `second_marker`
-  - `ready`
+- `idle`
+- `first_marker`
+- `second_marker`
+- `ready`
 - Notify the rest of the system when the user selects a marker in LightBurn.
 
 ### Inputs
-- OS window events.
-- Keyboard events (Alt+F1).
+- User hotkey presses.
+- Window focus events.
 
 ### Outputs
-- State transitions.
-- Signals to move camera/laser to next marker.
+- State change notifications.
 
 ### Notes
-- MVP uses Python WinAPI bindings.
-- Final tool uses native WinAPI hooks in C/C++.
+- Requires platform-specific code for window and keyboard monitoring (e.g., `pywin32` on Windows).
+- Final tool will use Qt's event handling.
 
 ---
 
-## 5. UI Layer
+## 6. UI Module
 
 ### Purpose
-Provide visual feedback, overlays, and user confirmations.
+Provide a graphical user interface for camera view, status, and manual control.
 
 ### Responsibilities
-- Display live camera feed.
-- Overlay detected markers and bounding boxes.
-- Show “marker found / confirm” dialog.
-- Display simulated work area and laser alignment.
-- Provide controls for starting/stopping the Print & Cut assist flow.
+- Display the live camera feed.
+- Show the current system state (e.g., "IDLE", "CONFIRM_M1").
+- Provide manual jogging controls.
+- Display an overview of the workspace (in simulation).
+- Allow the user to confirm or cancel marker detection.
 
 ### Inputs
-- Frames from camera module.
-- Marker recognizer output.
-- Simulator or hardware positions.
+- Camera frames.
+- System state.
+- Detected marker information.
 
 ### Outputs
-- User confirmations.
-- Visual overlays.
+- User commands (e.g., jog, confirm, cancel).
 
 ### Notes
-- MVP UI: wxPython or minimal custom window.
-- Final UI: Qt (C++).
-
----
-
-## 6. Coordinate Mapping Module
-
-### Purpose
-Convert between camera image coordinates, gantry coordinates, and laser coordinates.
-
-### Responsibilities
-- Maintain camera‑to‑laser offset.
-- Convert marker center from image space to machine space.
-- Apply calibration parameters.
-- Provide consistent coordinate transforms for both MVP and final tool.
-
-### Inputs
-- Marker center in image coordinates.
-- Camera calibration parameters.
-- Gantry position.
-
-### Outputs
-- Marker center in machine coordinates.
-
----
-
-## 7. Configuration Module
-
-### Purpose
-Store and load all persistent settings.
-
-### Responsibilities
-- Camera parameters (resolution, exposure).
-- Marker detection thresholds.
-- Camera‑to‑laser offset.
-- Simulator settings (MVP only).
-- LightBurn bridge settings.
-
-### Inputs
-- Config file (JSON, YAML, or similar).
-
-### Outputs
-- Structured configuration objects.
-
----
-
-## 8. Logging Module
-
-### Purpose
-Provide consistent logging across MVP and final tool.
-
-### Responsibilities
-- Log marker detection events.
-- Log movement commands.
-- Log LightBurn bridge state transitions.
-- Log errors and warnings.
-
-### Notes
-- MVP: Python logging.
-- Final: C++ logging framework (spdlog or Qt logging).
-
----
-
-## 9. External Behaviour Contract
-
-### Purpose
-Ensure that MVP and final tool behave identically from the outside.
-
-### Responsibilities
-- Same marker detection semantics.
-- Same Print & Cut state transitions.
-- Same user confirmations.
-- Same coordinate mapping behaviour.
-- Same LightBurn integration logic.
-
----
-
-## 10. Module Interactions (High-Level)
-
-- **Camera → Recognizer**: provides frames.
-- **Recognizer → UI**: provides marker detection results.
-- **Recognizer → Simulator/Hardware**: triggers movement.
-- **Simulator/Hardware → UI**: updates positions.
-- **LightBurn Bridge → State Machine**: triggers marker selection events.
-- **State Machine → Recognizer/Simulator**: coordinates Print & Cut flow.
-
----
-
-## 11. MVP vs Final Tool Summary
-
-| Module | MVP (Python) | Final Tool (C/C++/Qt) |
-|--------|--------------|------------------------|
-| Camera | DirectShow via OpenCV | DirectShow/Media Foundation |
-| Recognizer | Python + OpenCV | C/C++ + OpenCV |
-| Simulator | Yes | Optional |
-| Bridge | Python WinAPI | Native WinAPI |
-| UI | wxPython | Qt |
-| Coordinates | Python | C/C++ |
-| Config | Python | C/C++ |
-| Logging | Python logging | spdlog / Qt logging |
-
----
-
-This document defines the stable module boundaries for both MVP and final implementation.
+- MVP uses Python's `tkinter` for simplicity.
+- Final tool will be built with Qt for a more robust and professional UI.
