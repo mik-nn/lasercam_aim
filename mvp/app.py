@@ -1,5 +1,4 @@
 # mvp/app.py
-import cv2
 import os
 import sys
 
@@ -9,69 +8,68 @@ if __name__ == "__main__":
     if project_root not in sys.path:
         sys.path.insert(0, project_root)
 
-from mvp.camera_simulator import CameraSimulator
-from mvp.ui import App
 from mvp.bridge import get_bridge
+from mvp.camera_simulator import CameraSimulator
+from mvp.config import Config
+from mvp.controller import GRBLController, RuidaController
+from mvp.ui import App
+
 
 class Application:
-    def __init__(self, use_simulator=True):
-        if use_simulator:
-            self.camera = CameraSimulator("HoneyComb.jpg")
-            
-            import random
-            import math
-            rotate_deg = random.uniform(0, 360)
-            
-            # Marker 1 and 2 base positions relative to machine center (to land on mesh)
-            m1_base = (150, 200)
-            m2_base = (300, 350)
-            
-            # Rotate positions around a central anchor on the mesh
-            mid_x, mid_y = 220, 270
-            
-            def rotate_pos(pos, mid, angle_deg):
-                rad = math.radians(angle_deg)
-                dx, dy = pos[0] - mid[0], pos[1] - mid[1]
-                rx = mid[0] + dx * math.cos(rad) - dy * math.sin(rad)
-                ry = mid[1] + dx * math.sin(rad) + dy * math.cos(rad)
-                return rx, ry
-            
-            m1_x, m1_y = rotate_pos(m1_base, (mid_x, mid_y), rotate_deg)
-            m2_x, m2_y = rotate_pos(m2_base, (mid_x, mid_y), rotate_deg)
-            
-            # Target angles relative to machine X
-            angle12 = math.degrees(math.atan2(m2_y - m1_y, m2_x - m1_x))
-            angle21 = angle12 + 180
-            
-            # Place markers on the simulator
-            self.camera.add_marker(m1_x, m1_y, 'square', angle12, rotate_deg=rotate_deg)
-            self.camera.add_marker(m2_x, m2_y, 'circle', angle21, rotate_deg=rotate_deg)
-            
-            # If TestPrint.png exists, place it too (centered between markers)
-            sample_mid_x, sample_mid_y = (m1_x + m2_x) / 2, (m1_y + m2_y) / 2
-            if os.path.exists("TestPrint.png"):
-                # Pass scale=0.5 to make it smaller as a sample
-                self.camera.simulator.place_sample("TestPrint.png", sample_mid_x, sample_mid_y, rotate_deg=rotate_deg, scale=0.5)
-                print(f"Placed TestPrint.png at ({sample_mid_x}, {sample_mid_y}) with scale 0.5 and {rotate_deg:.2f} deg")
-            
-            print(f"Placed markers with sample rotation: {rotate_deg:.2f} deg")
-        else:
-            from mvp.camera import Camera
-            self.camera = Camera()
+    def __init__(self):
+        cfg = Config.load()
+        controller = None
+
+        if cfg.controller == "grbl":
+            controller = GRBLController(port=cfg.grbl_port, baudrate=cfg.grbl_baudrate)
+        elif cfg.controller == "ruida":
+            controller = RuidaController(host=cfg.ruida_host, port=cfg.ruida_port)
+
+        # The camera is always a simulator in this version of the MVP.
+        # A real camera implementation would be chosen here based on config.
+        self.camera = CameraSimulator(
+            controller=controller,
+            workspace_image_path=cfg.workspace_image,
+            camera_fov=cfg.camera_fov_mm,
+            workspace_pixels_per_mm=cfg.workspace_pixels_per_mm,
+            camera_resolution_px=cfg.camera_resolution,
+        )
+
+        # If no hardware controller was specified, the camera created a default
+        # simulated one. We use that for the UI.
+        if controller is None:
+            controller = self.camera.controller
+
+        # Overlay new-design markers on top of the workspace image.
+        # The workspace already contains the sample card; the new markers
+        # are placed at the card corners to overwrite the old embedded ones.
+        # M1 — square marker; internal dot points toward M2.
+        self.camera.add_marker(
+            cfg.m1_x_mm, cfg.m1_y_mm, "square", cfg.m1_angle_deg
+        )
+        # M2 — circle marker; internal dot points toward M1.
+        self.camera.add_marker(
+            cfg.m2_x_mm, cfg.m2_y_mm, "circle", cfg.m2_angle_deg
+        )
+
+        # Set initial camera position from config
+        self.camera.move_to(cfg.camera_start_x_mm, cfg.camera_start_y_mm)
+        print(
+            f"Camera started at ({cfg.camera_start_x_mm:.1f}, "
+            f"{cfg.camera_start_y_mm:.1f}) mm"
+        )
 
         self.bridge = get_bridge()
-        self.ui = App(camera=self.camera)
-        
-        # Initial gantry position
-        if use_simulator:
-            self.camera.move_to(m1_x, m1_y) # Start exactly at the first marker
+        self.ui = App(camera=self.camera, controller=controller)
 
     def run(self):
         self.ui.mainloop()
 
+
 def main():
     app = Application()
     app.run()
+
 
 if __name__ == "__main__":
     main()

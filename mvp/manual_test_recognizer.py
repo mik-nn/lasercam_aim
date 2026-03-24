@@ -3,6 +3,7 @@ import cv2
 from camera import Camera
 from recognizer import MarkerRecognizer
 
+
 def main():
     camera = Camera()
     recognizer = MarkerRecognizer()
@@ -25,6 +26,7 @@ def main():
 
     camera.release()
     cv2.destroyAllWindows()
+
 
 if __name__ == "__main__":
     main()

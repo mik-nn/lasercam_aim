@@ -1,6 +1,7 @@
 # bridge.py
-import sys
 import platform
+import sys
+
 
 class LightBurnBridge:
     def __init__(self):
@@ -9,6 +10,7 @@ class LightBurnBridge:
     def check_for_hotkey(self):
         # Placeholder for hotkey detection
         pass
+
 
 class FakeLightBurnBridge:
     def __init__(self):
@@ -21,6 +23,7 @@ class FakeLightBurnBridge:
         Returns True if the hotkey was pressed.
         """
         import select
+
         if sys.stdin in select.select([sys.stdin], [], [], 0)[0]:
             line = sys.stdin.readline()
             if "1" in line:
@@ -28,13 +31,15 @@ class FakeLightBurnBridge:
                 return True
         return False
 
+
 def get_bridge():
     """Factory function to get the correct bridge for the current OS."""
     if platform.system() == "Windows":
         # On Windows, you would try to import win32gui and create a real bridge
         try:
             import win32gui
-            # return RealLightBurnBridge() 
+
+            # return RealLightBurnBridge()
             print("RealLightBurnBridge not implemented yet, using fake one.")
             return FakeLightBurnBridge()
         except ImportError:

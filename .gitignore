@@ -1,6 +1,10 @@
 __pycache__/
 *.pyc
 .zencoder/
-CLAUDE.md
-TestPrint.png
+.zenflow/
+.pytest_cache/
+.venv/
+*.png
 test_*.png
+*.pdf
+docs/
