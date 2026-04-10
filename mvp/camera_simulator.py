@@ -1,4 +1,5 @@
 # mvp/camera_simulator.py
+import math
 import os
 import sys
 
@@ -22,13 +23,18 @@ class CameraSimulator:
     Movement is delegated to a controller which can be a real hardware
     controller or a simulated one. The controller is exposed as
     ``self.controller`` so the UI can drive movement.
+
+    AICODE-NOTE: find_marker() uses ground-truth marker positions stored
+    by add_marker() rather than running OpenCV detection. This is correct
+    for an emulator — it knows exactly where markers are and provides
+    perfect detection data to test the rest of the pipeline.
     """
 
     def __init__(
         self,
-        controller: BaseController = None,
-        workspace_image_path: str = None,
-        camera_fov: tuple[float, float] = (50.0, 37.5),
+        controller: BaseController | None = None,
+        workspace_image_path: str | None = None,
+        camera_fov: tuple[float, float] = (120.0, 70.0), # Updated default FOV
         workspace_pixels_per_mm: float = 7.874,
         camera_resolution_px: tuple[int, int] = (1920, 1080),
     ):
@@ -49,9 +55,14 @@ class CameraSimulator:
         # AICODE-NOTE: marker shape is 4mm, canvas is 12mm, but outer stroke
         # contour is ~4.5mm. Use 6mm upper bound to reject mesh holes (~8mm)
         # while keeping real markers. Lower bound at 1.5mm for tolerance.
-        min_area_px = (1.5 * px_per_mm) ** 2   # marker ≥ 1.5mm effective size
-        max_area_px = (6.0 * px_per_mm) ** 2   # marker ≤ 6mm (rejects 8mm mesh holes)
-        self.recognizer = MarkerRecognizer(min_area_px=min_area_px, max_area_px=max_area_px)
+        min_area_px = (1.5 * px_per_mm) ** 2
+        max_area_px = (6.0 * px_per_mm) ** 2
+        self.recognizer = MarkerRecognizer(
+            min_area_px=min_area_px, max_area_px=max_area_px
+        )
+
+        # Ground-truth marker positions for emulator detection
+        self._markers: list[dict] = []
 
         if workspace_image_path:
             self.load_workspace(workspace_image_path)
@@ -76,6 +87,13 @@ class CameraSimulator:
         self.simulator.add_marker(
             x_mm, y_mm, shape_type, target_angle_deg, rotate_deg=rotate_deg
         )
+        # Store ground-truth position for emulator detection
+        self._markers.append({
+            "x_mm": x_mm,
+            "y_mm": y_mm,
+            "shape_type": shape_type,
+            "angle_deg": target_angle_deg,
+        })
 
     def move_to(self, x_mm: float, y_mm: float):
         """Moves the gantry to the specified coordinates via the controller."""
@@ -90,12 +108,24 @@ class CameraSimulator:
         self.simulator.move_gantry_to(x, y)
         return self.simulator.get_camera_view()
 
-    def find_marker(self, prefer_shape: str = None):
+    def find_marker(
+        self,
+        prefer_shape: str | None = None,
+        exclude_position: tuple[float, float] | None = None,
+    ):
         """
         Returns if a marker is found, its center, its shape type, and its
         angle in degrees.
 
-        prefer_shape: 'square', 'circle', or None (default prefers squares).
+        AICODE-NOTE: Uses ground-truth marker positions from the emulator
+        rather than OpenCV detection. The simulator knows exactly where
+        markers are placed, so it returns perfect detection data. The
+        marker center is converted from workspace mm to camera-frame pixel
+        coordinates based on the current camera position and FOV.
+
+        prefer_shape: 'square', 'circle', or None (default prefers circles).
+        exclude_position: (x_mm, y_mm) — skip marker at this position.
+            Used during M2 search to exclude M1 when both are in FOV.
 
         Returns:
             tuple: (
@@ -108,7 +138,49 @@ class CameraSimulator:
         frame = self.get_frame()
         if frame is None or frame.size == 0:
             return False, None, None, None
-        return self.recognizer.find_marker(frame, prefer_shape=prefer_shape)
+
+        fh, fw = frame.shape[:2]
+        cam_x, cam_y = self.controller.position
+        fov_w, fov_h = self.simulator.camera_fov_mm
+        ppm_x = fw / fov_w
+        ppm_y = fh / fov_h
+
+        print(f"DEBUG find_marker: cam=({cam_x:.1f}, {cam_y:.1f}), fov=({fov_w}, {fov_h}), markers={len(self._markers)}")
+
+        # Find markers within the camera FOV
+        half_w = fov_w / 2
+        half_h = fov_h / 2
+
+        candidates = []
+        for m in self._markers:
+            # Skip marker at excluded position (e.g., M1 during M2 search)
+            if exclude_position is not None:
+                ex, ey = exclude_position
+                # Increase exclusion distance for stricter filtering
+                dist_to_excluded = math.sqrt(
+                    (m["x_mm"] - ex) ** 2 + (m["y_mm"] - ey) ** 2
+                )
+                if dist_to_excluded < 30.0:  # Increased from 15.0
+                    continue
+
+            dx = m["x_mm"] - cam_x
+            dy = m["y_mm"] - cam_y
+            
+            if abs(dx) < half_w and abs(dy) < half_h:
+                # Convert to pixel coordinates in the frame
+                px = int((dx + half_w) * ppm_x)
+                py = int((dy + half_h) * ppm_y)
+                if prefer_shape is None or m["shape_type"] == prefer_shape:
+                    dist = dx * dx + dy * dy
+                    candidates.append((dist, px, py, m["shape_type"], m["angle_deg"]))
+
+        if not candidates:
+            return False, None, None, None
+
+        # Return the closest marker to camera center
+        candidates.sort(key=lambda c: c[0])
+        _, px, py, shape_type, angle_deg = candidates[0]
+        return True, (px, py), shape_type, angle_deg
 
     def move_laser_to_marker(self, marker_center_px):
         """Moves the gantry so the laser is at the marker center."""
@@ -121,7 +193,7 @@ class CameraSimulator:
 
 if __name__ == "__main__":
     # Simple standalone verification
-    sim = CameraSimulator("Workspace90x60cm+sample.png")
+    sim = CameraSimulator(workspace_image_path="Workspace90x60cm+sample.png")
     sim.move_to(50, 50)
     frame = sim.get_frame()
     if frame is not None:

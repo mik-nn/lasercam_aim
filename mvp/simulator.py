@@ -1,6 +1,7 @@
 # simulator.py
 import math
 
+import cv2
 import numpy as np
 
 
@@ -9,36 +10,69 @@ class MotionSimulator:
         self,
         work_area_size=(1000, 1000),
         camera_fov=(100, 100),
-        workspace_pixels_per_mm=5,
+        workspace_pixels_per_mm: float = 5,
         camera_resolution_px=(1920, 1080),
     ):
+        self.workspace_pixels_per_mm = workspace_pixels_per_mm
+        self.camera_fov_mm = camera_fov
+        self.camera_fov_px = camera_resolution_px
+
         # Work area is BGR by default
         self.work_area = (
             np.ones((work_area_size[1], work_area_size[0], 3), dtype=np.uint8) * 255
         )
+
+        # AICODE-NOTE: Material area — 200×150 mm piece centered on the table
+        self.material_x_mm = work_area_size[0] / workspace_pixels_per_mm / 2
+        self.material_y_mm = work_area_size[1] / workspace_pixels_per_mm / 2
+        self.material_w_mm = 200.0
+        self.material_h_mm = 150.0
+        self._draw_material()
+
         self.gantry_x = 0  # in mm
         self.gantry_y = 0  # in mm
-        self.laser_offset_x = 10  # in mm
-        self.laser_offset_y = 10  # in mm
-        self.camera_fov_mm = camera_fov  # in mm
-        self.workspace_pixels_per_mm = workspace_pixels_per_mm
+        # AICODE-NOTE: Realistic camera-laser offset based on typical hardware
+        # Camera is offset from laser by ~50-80mm X and ~10-20mm Y
+        self.laser_offset_x: float = 65.0  # mm
+        self.laser_offset_y: float = 15.0  # mm
 
-        # AICODE-NOTE: camera_fov_px is the camera sensor resolution, NOT the
-        # workspace crop size. The crop size is derived on the fly inside
-        # get_camera_view() as fov_mm × workspace_pixels_per_mm.
-        self.camera_fov_px = camera_resolution_px  # (width, height) in pixels
+        # Calibration marker position (world coordinates)
+        self.calibration_marker_pos = None  # (x_mm, y_mm) or None
 
         # The camera is mounted on the gantry, its position is the gantry position
         self.camera_x_mm = self.gantry_x
         self.camera_y_mm = self.gantry_y
 
+    def _draw_material(self):
+        """Draw the material area on the workspace."""
+        cx = int(self.material_x_mm * self.workspace_pixels_per_mm)
+        cy = int(self.material_y_mm * self.workspace_pixels_per_mm)
+        hw = int(self.material_w_mm / 2 * self.workspace_pixels_per_mm)
+        hh = int(self.material_h_mm / 2 * self.workspace_pixels_per_mm)
+
+        x1, x2 = max(0, cx - hw), min(self.work_area.shape[1], cx + hw)
+        y1, y2 = max(0, cy - hh), min(self.work_area.shape[0], cy + hh)
+
+        # Light brown material color
+        self.work_area[y1:y2, x1:x2] = (200, 180, 150)
+
+        # Draw border
+        cv2.rectangle(
+            self.work_area, (x1, y1), (x2 - 1, y2 - 1), (100, 80, 60), 2
+        )
+
     def set_work_area_image(self, image):
         """Sets the background image for the work area."""
         self.work_area = image
-        # Optionally update size if image is different
+        # Recalculate material position based on actual image dimensions
+        h, w = self.work_area.shape[:2]
+        self.material_x_mm = w / self.workspace_pixels_per_mm / 2
+        self.material_y_mm = h / self.workspace_pixels_per_mm / 2
+        # Redraw material on top
+        self._draw_material()
         print(
             f"Work area image set. "
-            f"Size: {self.work_area.shape[1]}x{self.work_area.shape[0]}"
+            f"Size: {w}x{h}, Material center: ({self.material_x_mm:.1f}, {self.material_y_mm:.1f}) mm"
         )
 
     def get_camera_view(self):
@@ -73,7 +107,10 @@ class MotionSimulator:
         out_w, out_h = self.camera_fov_px  # camera_fov_px == camera_resolution
         return cv2.resize(crop, (out_w, out_h), interpolation=cv2.INTER_LINEAR)
 
-    def add_marker(self, x_mm, y_mm, shape_type, target_angle_deg, rotate_deg=0):
+    def add_marker(
+        self, x_mm, y_mm, shape_type, target_angle_deg,
+        rotate_deg: float = 0,
+    ):
         """
         Adds a marker of the specified type at the given position.
         The marker's arrow will point in the specified direction.
@@ -230,6 +267,32 @@ class MotionSimulator:
         self.camera_x_mm = self.gantry_x
         self.camera_y_mm = self.gantry_y
         print(f"Gantry moved to: ({self.gantry_x}, {self.gantry_y})")
+
+    def draw_calibration_marker(self, x_mm, y_mm):
+        """Draw a calibration marker (circle + cross) at the given position.
+
+        Creates a clean white background around the marker to ensure reliable detection.
+        """
+        px = int(x_mm * self.workspace_pixels_per_mm)
+        py = int(y_mm * self.workspace_pixels_per_mm)
+        radius = int(3 * self.workspace_pixels_per_mm)
+        cross_len = int(5 * self.workspace_pixels_per_mm)
+        thickness = max(1, int(0.5 * self.workspace_pixels_per_mm))
+
+        # Create clean white background around marker (10mm radius)
+        clean_radius = int(10 * self.workspace_pixels_per_mm)
+        x1, x2 = max(0, px - clean_radius), min(self.work_area.shape[1], px + clean_radius)
+        y1, y2 = max(0, py - clean_radius), min(self.work_area.shape[0], py + clean_radius)
+        self.work_area[y1:y2, x1:x2] = (255, 255, 255)
+
+        # Draw black circle
+        cv2.circle(self.work_area, (px, py), radius, (0, 0, 0), -1)
+        # Draw white cross
+        cv2.line(self.work_area, (px - cross_len, py), (px + cross_len, py), (255, 255, 255), thickness)
+        cv2.line(self.work_area, (px, py - cross_len), (px, py + cross_len), (255, 255, 255), thickness)
+
+        # Store calibration marker position for detection
+        self.calibration_marker_pos = (x_mm, y_mm)
 
     def move_laser_to_marker_center(self, marker_center_camera_px):
         """

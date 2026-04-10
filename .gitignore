@@ -8,4 +8,8 @@ __pycache__/
 test_*.png
 *.pdf
 *.pytest_cache
-mvp/__pycache__
+mvp/__pycache__/
+.flake8
+*_diff.txt
+*.log
+*.json

@@ -10,58 +10,62 @@ def create_base_image(marker_size_mm, scale):
     return image, size_px // 2
 
 
-def generate_marker(shape_type, target_angle_deg, output_path, scale=20):
+def generate_marker(shape_type, target_angle_deg, output_path, scale: float = 20):
     """
     Generates a marker image.
 
-    Design 1 — Clean Outline + Offset Internal Dot:
-      - Outer boundary: square or circle stroke (NO external arrow head).
-        This guarantees a clean, uninterrupted outer contour so that
-        approxPolyDP always yields exactly 4 points for a square and high
-        circularity for a circle.
-      - Direction indicator: a single filled dot placed INSIDE the shape at
-        1 mm from centre in the direction of target_angle_deg.  Its centroid
-        offset from the shape centre is what the recogniser uses to derive the
-        angle (atan2 of grandchild centroid vs parent centroid).
+    Design: Solid Fill + White Direction Line
+      - Outer shape: solid black filled square (M1) or circle (M2), 4 mm.
+        A solid fill gives a clean, unambiguous outer contour — no stroke
+        irregularities at camera resolution.
+      - Direction indicator: a white filled line (thick rectangle) drawn
+        FROM the shape centre TOWARD the other marker.  It creates a single
+        child contour whose centroid is offset from the shape centre.
+        Child area / outer area ≈ 0.08 → falls in the recogniser's direct-
+        child branch (0.005 < ratio < 0.2), giving reliable detection.
+      - No external elements: the 16 mm canvas around the 4 mm shape is
+        pure white, so it composites cleanly over any workspace background.
 
-    shape_type: 'square' or 'circle'
-    target_angle_deg: angle towards the other marker (image coords, 0=east, 90=south)
+    shape_type        : 'square' or 'circle'
+    target_angle_deg  : angle toward the other marker (image coords,
+                        0 = east / right, 90 = south / down)
     """
-    marker_size_mm = 16.0
-    shape_size_mm = 4.0
-    stroke_width_mm = 0.5
+    marker_size_mm = 16.0   # canvas (white border around the 4 mm shape)
+    shape_size_mm = 4.0     # outer filled shape diameter / side length
+    line_length_mm = 1.6    # white line from centre to this distance
+    line_width_mm = 0.8     # width of the white line indicator
 
     image, center_px = create_base_image(marker_size_mm, scale)
     center = (center_px, center_px)
 
-    color = (0, 0, 0)
-    stroke_px = max(1, int(stroke_width_mm * scale))
     shape_px = int(shape_size_mm * scale)
 
+    # --- Solid filled outer shape ---
     if shape_type == "square":
         half = shape_px // 2
         cv2.rectangle(
             image,
             (center_px - half, center_px - half),
             (center_px + half, center_px + half),
-            color,
-            stroke_px,
+            (0, 0, 0),
+            -1,  # filled
         )
     elif shape_type == "circle":
-        cv2.circle(image, center, shape_px // 2, color, stroke_px)
+        cv2.circle(image, center, shape_px // 2, (0, 0, 0), -1)
 
-    # Direction indicator: offset solid dot INSIDE the shape.
-    # Placed at dot_offset_mm from centre in the direction of the target.
-    # Radius chosen so the dot is clearly detectable at camera resolution
-    # (~6 px at 7.874 px/mm workspace) while staying inside the stroke boundary.
-    dot_offset_mm = 1.0
-    dot_radius_mm = 0.6
+    # --- White direction line from centre toward target ---
+    # The line is drawn as a thick white stroke starting at the shape centre
+    # and extending line_length_mm in the direction of target_angle_deg.
+    # After THRESH_BINARY_INV, this white region becomes a "hole" (child
+    # contour) inside the solid black shape.  Its centroid displacement
+    # encodes the direction angle.
+    # AICODE-NOTE: thickness must be ≥ 2px at every supported scale to
+    # survive Gaussian blur in the recogniser.
     angle_rad = math.radians(target_angle_deg)
-    dx = int(round(dot_offset_mm * scale * math.cos(angle_rad)))
-    dy = int(round(dot_offset_mm * scale * math.sin(angle_rad)))
-    dot_center = (center_px + dx, center_px + dy)
-    dot_radius = max(2, int(dot_radius_mm * scale))
-    cv2.circle(image, dot_center, dot_radius, color, -1)
+    end_x = center_px + int(round(line_length_mm * scale * math.cos(angle_rad)))
+    end_y = center_px + int(round(line_length_mm * scale * math.sin(angle_rad)))
+    line_thickness_px = max(2, int(line_width_mm * scale))
+    cv2.line(image, center, (end_x, end_y), (255, 255, 255), line_thickness_px)
 
     cv2.imwrite(output_path, image)
     print(
@@ -76,7 +80,7 @@ if __name__ == "__main__":
         "--type", choices=["square", "circle"], required=True, help="Marker shape type"
     )
     parser.add_argument(
-        "--angle", type=float, default=0, help="Angle in degrees for the direction dot"
+        "--angle", type=float, default=0, help="Angle in degrees for the direction line"
     )
     parser.add_argument(
         "--output", type=str, default="marker.png", help="Output file path"

@@ -84,6 +84,6 @@ def test_simulator_move_laser_to_marker():
     sim.move_laser_to_marker_center(marker_center_px)
 
     # Marker absolute position should be (0, 0) mm
-    # To place laser at (0, 0), gantry must be at (0 - 10, 0 - 10) = (-10, -10)
-    assert sim.gantry_x == -10
-    assert sim.gantry_y == -10
+    # To place laser at (0, 0), gantry must be at (0 - 65, 0 - 15) = (-65, -15)
+    assert sim.gantry_x == -65
+    assert sim.gantry_y == -15

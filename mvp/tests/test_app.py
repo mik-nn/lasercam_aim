@@ -1,7 +1,9 @@
+import os
 import sys
 from unittest.mock import MagicMock, patch
 
 import numpy as np
+import pytest
 
 from mvp.app import Application
 
@@ -12,6 +14,19 @@ sys.modules["tkinter.ttk"] = MagicMock()
 sys.modules["PIL"] = MagicMock()
 sys.modules["PIL.Image"] = MagicMock()
 sys.modules["PIL.ImageTk"] = MagicMock()
+
+# Path to the config file
+_CFG_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "lasercam.json")
+
+
+@pytest.fixture(autouse=True)
+def _clean_config():
+    """Remove any persisted config before each test so defaults are used."""
+    if os.path.exists(_CFG_PATH):
+        os.remove(_CFG_PATH)
+    yield
+    if os.path.exists(_CFG_PATH):
+        os.remove(_CFG_PATH)
 
 
 def imread_side_effect(path, *args, **kwargs):
@@ -40,4 +55,4 @@ def test_app_init_simulator(mock_imread, mock_get_bridge, mock_ui_app):
 def test_app_run(mock_get_bridge, mock_ui_app):
     app = Application()
     app.run()
-    app.ui.mainloop.assert_called_once()
+    app.ui.mainloop.assert_called_once()  # type: ignore
