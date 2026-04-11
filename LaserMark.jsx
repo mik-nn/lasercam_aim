@@ -1,181 +1,207 @@
-/**
- * LaserMark.jsx  — Illustrator Extension for LaserCam Markers
- *
- * Design: Unified Solid Circle + White Direction Line
- *   Both M1 and M2 are identical solid black circles (5mm diameter)
- *   with a white direction line pointing toward the other marker.
- *
- * The white direction line is a thin rectangle drawn from the shape centre
- * toward the other marker.  It prints as a white shape, ensuring a reliable
- * detection feature at camera resolution.
- *
- * Placement:
- *   M1 is placed at the top-right corner of the selection bounding box,
- *   offset 8 mm outward.
- *   M2 is placed at the bottom-left corner of the selection bounding box,
- *   offset 8 mm outward.
- *
- * After placing both markers the artboard is expanded so both markers
- * are fully inside it.
- */
+// MarkerDiagonal_Final.jsx
+// Метки 8 мм: квадрат (правый верхний) и круг (левый нижний)
+// Метки располагаются СНАРУЖИ общего bounding box выделения
+// Стрелки указывают друг на друга, треугольники вынесены
+// Метки всегда внутри артборда (минимальное расширение)
+// Всё рисуется spot-цветом
 
-var MM = 2.834645669291339;   // Illustrator points per mm (72 pt / 25.4 mm)
-var SHAPE_MM   = 5.0;          // circle diameter (mm)
-var LINE_LEN   = 2.0;          // direction line length from center (mm)
-var LINE_WIDTH = 0.7;          // direction line width (mm)
-var CANVAS_MM  = 16.0;         // bounding canvas for each marker (mm)
-var OFFSET_MM  = 8.0;          // placement offset beyond selection corner (mm)
+(function () {
 
-// ── helpers ──────────────────────────────────────────────────────────────────
-
-function blackColor() {
-    var c = new CMYKColor();
-    c.cyan = 0; c.magenta = 0; c.yellow = 0; c.black = 100;
-    return c;
-}
-
-function whiteColor() {
-    var c = new CMYKColor();
-    c.cyan = 0; c.magenta = 0; c.yellow = 0; c.black = 0;
-    return c;
-}
-
-/**
- * Draw a solid filled black circle marker with a white direction line.
- * cx, cy  : centre of the circle in document points (Y-up Illustrator coords)
- * angle   : direction toward the other marker in Illustrator radians (Y-up,
- *           0 = east, positive = counter-clockwise)
- */
-function drawCircleMarker(layer, cx, cy, angle) {
-    var r = (SHAPE_MM / 2) * MM;
-
-    // Solid black circle
-    var el = layer.pathItems.ellipse(
-        cy + r,   // top
-        cx - r,   // left
-        SHAPE_MM * MM,
-        SHAPE_MM * MM
-    );
-    el.filled = true;
-    el.fillColor = blackColor();
-    el.stroked = false;
-
-    // White direction line
-    drawLineIndicator(layer, cx, cy, angle);
-}
-
-/**
- * Draw the white direction line as a solid white filled rectangle.
- * The rectangle starts at the shape centre and extends LINE_LEN mm in
- * the given angle direction, with width LINE_WIDTH mm.
- *
- * Note: Illustrator uses Y-up coordinates, so Math.sin gives the correct
- * vertical component without negation.
- */
-function drawLineIndicator(layer, cx, cy, angle) {
-    var len = LINE_LEN   * MM;
-    var hw  = (LINE_WIDTH / 2) * MM;
-
-    var ca  = Math.cos(angle);
-    var sa  = Math.sin(angle);
-
-    // Unit perpendicular vector (left of the direction vector in Y-up space)
-    var px  = -sa;
-    var py  =  ca;
-
-    // Four corners of the white rectangle (Illustrator [x, y] arrays)
-    var p1 = [cx + px * hw,            cy + py * hw           ];  // start-left
-    var p2 = [cx + ca * len + px * hw, cy + sa * len + py * hw];  // end-left
-    var p3 = [cx + ca * len - px * hw, cy + sa * len - py * hw];  // end-right
-    var p4 = [cx - px * hw,            cy - py * hw           ];  // start-right
-
-    var rect = layer.pathItems.add();
-    rect.setEntirePath([p1, p2, p3, p4]);
-    rect.closed = true;
-    rect.filled = true;
-    rect.fillColor = whiteColor();
-    rect.stroked = false;
-}
-
-// ── placement ─────────────────────────────────────────────────────────────────
-
-function run() {
+    if (app.documents.length === 0) return;
     var doc = app.activeDocument;
-    var sel = doc.selection;
 
-    if (!sel || sel.length === 0) {
-        alert("Please select artwork before running LaserMark.");
+    if (!doc.selection || doc.selection.length === 0) {
+        alert("Выдели объекты.");
         return;
     }
 
-    // Compute bounding box of the entire selection
-    var bounds = sel[0].visibleBounds;  // [left, top, right, bottom]
+    // --- Константы ---
+    var MM = 2.834645;
+    var markerSize = 8 * MM;
+    var shapeSize  = 4 * MM;
+    var arrowLen   = 3 * MM;
+    var arrowThick = 0.6 * MM;
+    var arrowHead  = 1.2 * MM;
+    var outsideGap = 2 * MM; // расстояние от объекта наружу
+    var tipOffset  = 0.8 * MM; // вынос треугольника
+
+    // --- Общий bounding box выделения ---
+    var sel = doc.selection;
+    var L = sel[0].geometricBounds[0];
+    var T = sel[0].geometricBounds[1];
+    var R = sel[0].geometricBounds[2];
+    var B = sel[0].geometricBounds[3];
+
     for (var i = 1; i < sel.length; i++) {
-        var b = sel[i].visibleBounds;
-        if (b[0] < bounds[0]) bounds[0] = b[0];  // left
-        if (b[1] > bounds[1]) bounds[1] = b[1];  // top
-        if (b[2] > bounds[2]) bounds[2] = b[2];  // right
-        if (b[3] < bounds[3]) bounds[3] = b[3];  // bottom
+        var gb = sel[i].geometricBounds;
+        if (gb[0] < L) L = gb[0];
+        if (gb[1] > T) T = gb[1];
+        if (gb[2] > R) R = gb[2];
+        if (gb[3] < B) B = gb[3];
     }
 
-    var selLeft   = bounds[0];
-    var selTop    = bounds[1];
-    var selRight  = bounds[2];
-    var selBottom = bounds[3];
+    // --- Слой Markers ---
+    var layerName = "Markers";
+    var markersLayer = null;
 
-    var offset = OFFSET_MM * MM;
-    var half   = (SHAPE_MM / 2) * MM;
-
-    // M1 (circle) : top-right corner, offset outward (+x, +y)
-    var m1x = selRight  + offset;
-    var m1y = selTop    + offset;
-
-    // M2 (circle) : bottom-left corner, offset outward (-x, -y)
-    var m2x = selLeft   - offset;
-    var m2y = selBottom - offset;
-
-    // Angles in Illustrator radians (Y-up)
-    // M1 direction line points TOWARD M2
-    var m1angle = Math.atan2(m2y - m1y, m2x - m1x);
-    // M2 direction line points TOWARD M1
-    var m2angle = Math.atan2(m1y - m2y, m1x - m2x);
-
-    // Create a dedicated layer for the markers
-    var markerLayer;
-    try {
-        markerLayer = doc.layers.getByName("LaserCam Markers");
-    } catch (e) {
-        markerLayer = doc.layers.add();
-        markerLayer.name = "LaserCam Markers";
+    for (var i = 0; i < doc.layers.length; i++) {
+        if (doc.layers[i].name === layerName) {
+            markersLayer = doc.layers[i];
+            break;
+        }
     }
-    markerLayer.locked = false;
-    markerLayer.visible = true;
+    if (!markersLayer) {
+        markersLayer = doc.layers.add();
+        markersLayer.name = layerName;
+    }
 
-    // Draw M1 and M2 (both are identical circles with direction lines)
-    drawCircleMarker(markerLayer, m1x, m1y, m1angle);
-    drawCircleMarker(markerLayer, m2x, m2y, m2angle);
+    // --- SPOT-цвет ---
+    function getSpotColor() {
+        var spotName = "MarkerSpot";
+        var spot = null;
 
-    // ── Expand artboard so both markers are fully inside ──────────────────
-    var pad = CANVAS_MM * MM;  // use the marker canvas as padding
+        for (var i = 0; i < doc.spots.length; i++) {
+            if (doc.spots[i].name === spotName) {
+                spot = doc.spots[i];
+                break;
+            }
+        }
 
-    var allBounds = [
-        Math.min(selLeft,  m1x - pad, m2x - pad),   // new left
-        Math.max(selTop,   m1y + pad, m2y + pad),   // new top
-        Math.max(selRight, m1x + pad, m2x + pad),   // new right
-        Math.min(selBottom, m1y - pad, m2y - pad)   // new bottom
-    ];
+        if (!spot) {
+            spot = doc.spots.add();
+            spot.name = spotName;
 
-    var ab = doc.artboards[0];
-    ab.artboardRect = allBounds;
+            var c = new CMYKColor();
+            c.cyan = 0;
+            c.magenta = 0;
+            c.yellow = 0;
+            c.black = 100;
 
-    alert(
-        "LaserCam markers placed.\n\n" +
-        "M1 (solid circle) : top-right, direction toward M2\n" +
-        "M2 (solid circle) : bottom-left, direction toward M1\n\n" +
-        "Both markers are identical 5mm circles with white direction lines.\n" +
-        "Both markers are on layer 'LaserCam Markers'.\n" +
-        "Print at 100% scale."
-    );
-}
+            spot.color = c;
+        }
 
-run();
+        var sc = new SpotColor();
+        sc.spot = spot;
+        sc.tint = 100;
+        return sc;
+    }
+
+    var spotColor = getSpotColor();
+
+    // --- Стрелка ---
+    function drawArrow(layer, cx, cy, tx, ty) {
+
+        var angle = Math.atan2(ty - cy, tx - cx);
+
+        // Линия стрелки
+        var x1 = cx;
+        var y1 = cy;
+
+        var x2 = cx + arrowLen * Math.cos(angle);
+        var y2 = cy + arrowLen * Math.sin(angle);
+
+        var line = layer.pathItems.add();
+        line.stroked = true;
+        line.strokeWidth = arrowThick;
+        line.strokeColor = spotColor;
+        line.filled = false;
+        line.setEntirePath([[x1, y1], [x2, y2]]);
+
+        // Вынесенный треугольник
+        var hx = x2 + tipOffset * Math.cos(angle);
+        var hy = y2 + tipOffset * Math.sin(angle);
+
+        var leftAngle  = angle + Math.PI * 0.75;
+        var rightAngle = angle - Math.PI * 0.75;
+
+        var lx = hx + arrowHead * Math.cos(leftAngle);
+        var ly = hy + arrowHead * Math.sin(leftAngle);
+
+        var rx = hx + arrowHead * Math.cos(rightAngle);
+        var ry = hy + arrowHead * Math.sin(rightAngle);
+
+        var head = layer.pathItems.add();
+        head.stroked = false;
+        head.filled = true;
+        head.fillColor = spotColor;
+        head.setEntirePath([[hx, hy], [lx, ly], [rx, ry]]);
+    }
+
+    // --- Квадрат ---
+    function drawSquare(cx, cy) {
+        var leftPos = cx - shapeSize / 2;
+        var topPos  = cy + shapeSize / 2;
+
+        var sq = markersLayer.pathItems.rectangle(
+            topPos,
+            leftPos,
+            shapeSize,
+            shapeSize
+        );
+        sq.stroked = true;
+        sq.strokeWidth = 0.25 * MM;
+        sq.strokeColor = spotColor;
+        sq.filled = false;
+    }
+
+    // --- Круг ---
+    function drawCircle(cx, cy) {
+        var leftPos = cx - shapeSize / 2;
+        var topPos  = cy + shapeSize / 2;
+
+        var circle = markersLayer.pathItems.ellipse(
+            topPos,
+            leftPos,
+            shapeSize,
+            shapeSize
+        );
+        circle.stroked = true;
+        circle.strokeWidth = 0.25 * MM;
+        circle.strokeColor = spotColor;
+        circle.filled = false;
+    }
+
+    // --- Центры меток (снаружи bounding box) ---
+    var sqX = R + outsideGap;
+    var sqY = T - outsideGap;
+
+    var crX = L - outsideGap;
+    var crY = B + outsideGap;
+
+    // --- Артборд ---
+    var ab = doc.artboards[doc.artboards.getActiveArtboardIndex()];
+
+    function ensureInsideArtboard(x, y) {
+        var rect = ab.artboardRect;
+        var abL = rect[0];
+        var abT = rect[1];
+        var abR = rect[2];
+        var abB = rect[3];
+
+        var half = markerSize / 2;
+
+        var needL = x - half;
+        var needT = y + half;
+        var needR = x + half;
+        var needB = y - half;
+
+        if (needL < abL) abL = needL;
+        if (needT > abT) abT = needT;
+        if (needR > abR) abR = needR;
+        if (needB < abB) abB = needB;
+
+        ab.artboardRect = [abL, abT, abR, abB];
+    }
+
+    ensureInsideArtboard(sqX, sqY);
+    ensureInsideArtboard(crX, crY);
+
+    // --- Рисуем метки ---
+    drawSquare(sqX, sqY);
+    drawCircle(crX, crY);
+
+    // --- Стрелки указывают друг на друга ---
+    drawArrow(markersLayer, sqX, sqY, crX, crY);
+    drawArrow(markersLayer, crX, crY, sqX, sqY);
+
+})();

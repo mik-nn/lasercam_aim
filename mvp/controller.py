@@ -309,6 +309,11 @@ class RuidaController(BaseController):
                     self._connected = True
                     self._initialize()
                     return
+                elif reply and len(reply) > 0:
+                    print(f"[RUIDA] Controller response {reply.hex()}, accepting connection")
+                    self._connected = True
+                    self._initialize()
+                    return
                 else:
                     print(f"[RUIDA] Unexpected reply: {reply.hex()}")
             except (socket.timeout, OSError) as e:
